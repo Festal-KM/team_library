@@ -1,0 +1,2 @@
+# 新しい予約を作成
+    new_reservation = {
