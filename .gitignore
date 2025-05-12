@@ -1,0 +1,10 @@
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.DS_Store
+frontend/public/images/
+backend/static/images/
+frontend/.next/ 
