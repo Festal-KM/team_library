@@ -1,9 +1,13 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AiOutlineLoading3Quarters, AiOutlinePlus, AiOutlineCheck, AiOutlineClose } from 'react-icons/ai';
+import { useAuthStore } from '@/lib/auth-store';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { purchaseRequestsApi, usersApi } from '@/lib/api';
+import { formatDate } from '@/lib/dateUtils';
 
 interface PurchaseRequest {
   id: number;
@@ -37,120 +41,79 @@ interface User {
 
 const PurchaseRequestsPage = () => {
   const router = useRouter();
-  const [myRequests, setMyRequests] = useState<PurchaseRequest[]>([]);
-  const [pendingRequests, setPendingRequests] = useState<PurchaseRequest[]>([]);
-  const [users, setUsers] = useState<Record<number, User>>({});
-  const [isLoading, setIsLoading] = useState(true);
-  const [userRole, setUserRole] = useState<'user' | 'admin'>('user'); // 実際はログイン情報から取得
-  const [userId, setUserId] = useState<number>(1); // 実際はログイン情報から取得
-  const [error, setError] = useState('');
-  const [actionLoading, setActionLoading] = useState<number | null>(null);
+  const { user } = useAuthStore();
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    const fetchData = async () => {
-      setIsLoading(true);
-      try {
-        // ユーザー一覧を取得
-        const usersResponse = await fetch('http://localhost:8000/api/users');
-        if (!usersResponse.ok) throw new Error('ユーザー情報の取得に失敗しました');
-        const usersData = await usersResponse.json();
-        
-        // ユーザーIDをキーとするオブジェクトに変換
-        const usersMap: Record<number, User> = {};
-        usersData.forEach((user: User) => {
-          usersMap[user.id] = user;
-          // 現在のユーザー（ログインユーザー）を設定
-          if (user.id === userId) {
-            setUserRole(user.role);
-          }
-        });
-        setUsers(usersMap);
-        
-        // 自分の申請一覧を取得
-        const myRequestsResponse = await fetch(`http://localhost:8000/api/purchase-requests/user/${userId}`);
-        if (!myRequestsResponse.ok) throw new Error('申請一覧の取得に失敗しました');
-        const myRequestsData = await myRequestsResponse.json();
-        setMyRequests(myRequestsData);
-        
-        // 管理者の場合、保留中の申請も取得
-        if (userRole === 'admin' || usersMap[userId]?.role === 'admin') {
-          const pendingResponse = await fetch('http://localhost:8000/api/purchase-requests/pending');
-          if (!pendingResponse.ok) throw new Error('保留中の申請の取得に失敗しました');
-          const pendingData = await pendingResponse.json();
-          setPendingRequests(pendingData);
-        }
-      } catch (err) {
-        console.error('Error fetching data:', err);
-        setError(err instanceof Error ? err.message : '申請データの取得中にエラーが発生しました');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    
-    fetchData();
-  }, [userId, userRole]);
-  
-  const handleApprove = async (requestId: number) => {
-    setActionLoading(requestId);
-    try {
-      const response = await fetch(`http://localhost:8000/api/purchase-requests/${requestId}/approve`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ admin_id: userId }),
+  const isAdmin = user?.role === 'admin';
+
+  // ユーザー一覧を取得（管理者のみ）
+  const { data: users = [], isLoading: usersLoading } = useQuery({
+    queryKey: ['users'],
+    queryFn: async () => {
+      const result = await usersApi.getUsers();
+      console.log('Users API Response:', result); // デバッグ用
+      return result;
+    },
+    enabled: isAdmin,
+  });
+
+  // 自分の購入申請を取得
+  const { data: myRequests = [], isLoading: myRequestsLoading, error: myRequestsError } = useQuery({
+    queryKey: ['purchase-requests', 'user', user?.id],
+    queryFn: () => purchaseRequestsApi.getUserRequests(user!.id),
+    enabled: !!user?.id,
+  });
+
+  // 管理者の場合、保留中の申請を取得
+  const { data: pendingRequests = [], isLoading: pendingLoading } = useQuery({
+    queryKey: ['purchase-requests', 'pending'],
+    queryFn: () => purchaseRequestsApi.getPendingRequests(),
+    enabled: isAdmin,
+  });
+
+  // ユーザーIDをキーとするマップを作成
+  const usersMap = React.useMemo(() => {
+    const map: Record<number, User> = {};
+    if (Array.isArray(users)) {
+      users.forEach((user: any) => {
+        map[user.id] = {
+          id: user.id,
+          username: user.name || user.username,
+          email: user.email,
+          full_name: user.name || user.full_name,
+          department: user.department,
+          role: user.role,
+        };
       });
-      
-      if (!response.ok) {
-        throw new Error('申請の承認に失敗しました');
-      }
-      
-      // 申請リストを更新
-      setPendingRequests(prev => prev.filter(req => req.id !== requestId));
-      
-      // 自分の申請リストも更新
-      const updatedRequest = await response.json();
-      setMyRequests(prev => 
-        prev.map(req => req.id === requestId ? updatedRequest : req)
-      );
-      
+    }
+    return map;
+  }, [users]);
+
+  const isLoading = myRequestsLoading || (isAdmin && (usersLoading || pendingLoading));
+
+  const handleApprove = async (requestId: number) => {
+    if (!user?.id) return;
+    
+    try {
+      await purchaseRequestsApi.processRequest(requestId, user.id, true);
+      // キャッシュを無効化してデータを再取得
+      queryClient.invalidateQueries({ queryKey: ['purchase-requests'] });
     } catch (err) {
       console.error('Error approving request:', err);
-      setError(err instanceof Error ? err.message : '申請の承認中にエラーが発生しました');
-    } finally {
-      setActionLoading(null);
+      alert('申請の承認中にエラーが発生しました');
     }
   };
   
   const handleReject = async (requestId: number) => {
-    setActionLoading(requestId);
+    if (!user?.id) return;
+    
     try {
-      const response = await fetch(`http://localhost:8000/api/purchase-requests/${requestId}/reject`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ admin_id: userId }),
-      });
-      
-      if (!response.ok) {
-        throw new Error('申請の却下に失敗しました');
-      }
-      
-      // 申請リストを更新
-      setPendingRequests(prev => prev.filter(req => req.id !== requestId));
-      
-      // 自分の申請リストも更新
-      const updatedRequest = await response.json();
-      setMyRequests(prev => 
-        prev.map(req => req.id === requestId ? updatedRequest : req)
-      );
-      
+      await purchaseRequestsApi.processRequest(requestId, user.id, false);
+      // キャッシュを無効化してデータを再取得
+      queryClient.invalidateQueries({ queryKey: ['purchase-requests'] });
     } catch (err) {
       console.error('Error rejecting request:', err);
-      setError(err instanceof Error ? err.message : '申請の却下中にエラーが発生しました');
-    } finally {
-      setActionLoading(null);
+      alert('申請の却下中にエラーが発生しました');
     }
   };
   
@@ -160,23 +123,30 @@ const PurchaseRequestsPage = () => {
         return <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded text-xs">審査中</span>;
       case 'approved':
         return <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs">承認済</span>;
+      case 'ordered':
+        return <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">発注済み</span>;
+      case 'received':
+        return <span className="px-2 py-1 bg-purple-100 text-purple-800 rounded text-xs">受領済み</span>;
+      case 'completed':
+        return <span className="px-2 py-1 bg-indigo-100 text-indigo-800 rounded text-xs">完了</span>;
       case 'rejected':
         return <span className="px-2 py-1 bg-red-100 text-red-800 rounded text-xs">却下</span>;
       default:
-        return <span className="px-2 py-1 bg-gray-100 text-gray-800 rounded text-xs">{status}</span>;
+        return <span className="px-2 py-1 bg-gray-100 text-gray-800 rounded text-xs">不明</span>;
     }
   };
   
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('ja-JP', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
+  // formatDate関数は @/lib/dateUtils からインポートするように変更
+
+  if (!user) {
+    return (
+      <div className="flex justify-center items-center min-h-screen">
+        <div className="text-center">
+          <p className="text-gray-500">ユーザー情報を読み込んでいます...</p>
+        </div>
+      </div>
+    );
+  }
   
   if (isLoading) {
     return (
@@ -199,14 +169,14 @@ const PurchaseRequestsPage = () => {
         </Link>
       </div>
       
-      {error && (
+      {myRequestsError && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-          <p>{error}</p>
+          <p>{myRequestsError instanceof Error ? myRequestsError.message : '申請データの取得中にエラーが発生しました'}</p>
         </div>
       )}
       
       {/* 管理者の場合、承認待ちの申請を表示 */}
-      {userRole === 'admin' && pendingRequests.length > 0 && (
+      {isAdmin && pendingRequests.length > 0 && (
         <div className="mb-8">
           <h2 className="text-xl font-semibold mb-4">承認待ちの申請</h2>
           <div className="bg-white shadow rounded overflow-hidden">
@@ -242,8 +212,8 @@ const PurchaseRequestsPage = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="text-sm text-gray-900">{users[request.user_id]?.full_name || `ID: ${request.user_id}`}</div>
-                      <div className="text-sm text-gray-500">{users[request.user_id]?.department}</div>
+                      <div className="text-sm text-gray-900">{usersMap[request.user_id]?.full_name || `ID: ${request.user_id}`}</div>
+                      <div className="text-sm text-gray-500">{usersMap[request.user_id]?.department}</div>
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-500">
                       {formatDate(request.created_at)}
@@ -255,26 +225,16 @@ const PurchaseRequestsPage = () => {
                       <div className="flex space-x-2">
                         <button
                           onClick={() => handleApprove(request.id)}
-                          disabled={actionLoading === request.id}
                           className="text-green-600 hover:text-green-900 flex items-center"
                         >
-                          {actionLoading === request.id ? (
-                            <AiOutlineLoading3Quarters className="animate-spin mr-1" />
-                          ) : (
-                            <AiOutlineCheck className="mr-1" />
-                          )}
+                          <AiOutlineCheck className="mr-1" />
                           承認
                         </button>
                         <button
                           onClick={() => handleReject(request.id)}
-                          disabled={actionLoading === request.id}
                           className="text-red-600 hover:text-red-900 flex items-center"
                         >
-                          {actionLoading === request.id ? (
-                            <AiOutlineLoading3Quarters className="animate-spin mr-1" />
-                          ) : (
-                            <AiOutlineClose className="mr-1" />
-                          )}
+                          <AiOutlineClose className="mr-1" />
                           却下
                         </button>
                       </div>
@@ -338,7 +298,7 @@ const PurchaseRequestsPage = () => {
                         )}
                         {request.approved_by && (
                           <span className="text-xs text-gray-500">
-                            承認者: {users[request.approved_by]?.full_name || `ID: ${request.approved_by}`}
+                            承認者: {usersMap[request.approved_by]?.full_name || `ID: ${request.approved_by}`}
                           </span>
                         )}
                       </div>

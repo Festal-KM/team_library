@@ -1,0 +1,1 @@
+import { test, expect } from "@playwright/test"; test.describe("基本的なE2Eテスト", () => { test("ホームページが正常に表示される", async ({ page }) => { await page.goto("/"); await expect(page).toHaveTitle(/Library Management/); await expect(page.locator("body")).toBeVisible(); }); });

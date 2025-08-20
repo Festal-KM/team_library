@@ -1,26 +1,35 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { booksApi } from '@/lib/api'
+import { booksApi, categoryApi } from '@/lib/api'
 import { 
   FunnelIcon, 
   XMarkIcon, 
   AdjustmentsHorizontalIcon,
   MagnifyingGlassIcon
 } from '@heroicons/react/24/outline'
-import { debounce } from 'lodash'
 
-type FiltersType = {
-  title: string;
-  author: string;
-  category: string;
-  availableOnly: boolean;
+// デバウンス関数
+function debounce<T extends (...args: any[]) => any>(func: T, delay: number): (...args: Parameters<T>) => void {
+  let timeoutId: NodeJS.Timeout
+  return (...args: Parameters<T>) => {
+    clearTimeout(timeoutId)
+    timeoutId = setTimeout(() => func(...args), delay)
+  }
 }
 
-type BookSearchFiltersProps = {
-  filters: FiltersType;
-  onFilterChange: (filters: Partial<FiltersType>) => void;
+interface FiltersType {
+  title: string
+  author: string
+  major_category: string
+  minor_categories: string[]
+  availableOnly: boolean
+}
+
+interface BookSearchFiltersProps {
+  filters: FiltersType
+  onFilterChange: (filters: Partial<FiltersType>) => void
 }
 
 export default function BookSearchFilters({ filters, onFilterChange }: BookSearchFiltersProps) {
@@ -29,16 +38,18 @@ export default function BookSearchFilters({ filters, onFilterChange }: BookSearc
   // 入力中の値を一時的に保存
   const [localFilters, setLocalFilters] = useState(filters)
   
-  // 利用可能なカテゴリー一覧を取得
-  const { data: books } = useQuery({
-    queryKey: ['books'],
-    queryFn: () => booksApi.getBooks(),
+  // カテゴリ構造を取得
+  const { data: categoryData } = useQuery({
+    queryKey: ['categories'],
+    queryFn: () => categoryApi.getCategories(),
   })
 
-  // 一意のカテゴリーリストを作成
-  const categories = books
-    ? Array.from(new Set(books.filter(book => book.category).map(book => book.category)))
-    : []
+  // 選択された大項目の中項目を取得
+  const { data: minorCategoriesData } = useQuery({
+    queryKey: ['minor-categories', localFilters.major_category],
+    queryFn: () => categoryApi.getMinorCategories(localFilters.major_category),
+    enabled: !!localFilters.major_category
+  })
 
   // 検索の遅延適用（デバウンス処理）
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -76,11 +87,21 @@ export default function BookSearchFilters({ filters, onFilterChange }: BookSearc
   }, [filters]);
 
   // フィルター値を更新する関数
-  const updateFilter = (key: keyof FiltersType, value: string | boolean) => {
+  const updateFilter = (key: keyof FiltersType, value: string | boolean | string[]) => {
     setLocalFilters(prev => ({
       ...prev,
       [key]: value
     }));
+  };
+
+  // 中項目カテゴリの選択/解除を処理
+  const toggleMinorCategory = (category: string) => {
+    const currentMinorCategories = localFilters.minor_categories || [];
+    const newMinorCategories = currentMinorCategories.includes(category)
+      ? currentMinorCategories.filter(c => c !== category)
+      : [...currentMinorCategories, category];
+    
+    updateFilter('minor_categories', newMinorCategories);
   };
 
   return (
@@ -149,25 +170,80 @@ export default function BookSearchFilters({ filters, onFilterChange }: BookSearc
             />
           </div>
 
-          {/* カテゴリー選択 */}
+          {/* フィルターリセットボタン */}
+          <button
+            onClick={() => {
+              const resetFilters = {
+                title: '',
+                author: '',
+                major_category: '',
+                minor_categories: [],
+                availableOnly: false,
+              };
+              setLocalFilters(resetFilters);
+              onFilterChange(resetFilters);
+            }}
+            className="w-full py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+          >
+            フィルターをクリア
+          </button>
+
+          {/* カテゴリー選択（階層カテゴリ対応） */}
           <div className="mb-6">
-            <label htmlFor="category" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="major_category" className="block text-sm font-medium text-gray-700 mb-1">
               カテゴリー
             </label>
             <select
-              id="category"
-              value={localFilters.category}
-              onChange={(e) => updateFilter('category', e.target.value)}
+              id="major_category"
+              value={localFilters.major_category}
+              onChange={(e) => {
+                const newMajorCategory = e.target.value;
+                updateFilter('major_category', newMajorCategory);
+                // 大項目が変更されたら中項目をリセット
+                if (newMajorCategory !== localFilters.major_category) {
+                  updateFilter('minor_categories', []);
+                }
+              }}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-primary-500"
             >
               <option value="">すべてのカテゴリー</option>
-              {categories.map((category) => (
+              {categoryData?.major_categories?.map((category: string) => (
                 <option key={category} value={category}>
                   {category}
                 </option>
               ))}
             </select>
           </div>
+
+          {/* 中項目カテゴリ選択（大項目が選択されている場合のみ表示） */}
+          {localFilters.major_category && minorCategoriesData?.minor_categories && (
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                詳細カテゴリー（複数選択可）
+              </label>
+              <div className="max-h-40 overflow-y-auto border border-gray-300 rounded-md p-3 bg-gray-50">
+                {minorCategoriesData.minor_categories.map((category: string) => (
+                  <div key={category} className="flex items-center mb-2 last:mb-0">
+                    <input
+                      type="checkbox"
+                      id={`minor-${category}`}
+                      checked={localFilters.minor_categories?.includes(category) || false}
+                      onChange={() => toggleMinorCategory(category)}
+                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                    />
+                    <label htmlFor={`minor-${category}`} className="ml-2 text-sm text-gray-700">
+                      {category}
+                    </label>
+                  </div>
+                ))}
+              </div>
+              {localFilters.minor_categories && localFilters.minor_categories.length > 0 && (
+                <p className="mt-2 text-xs text-gray-500">
+                  {localFilters.minor_categories.length}個のカテゴリーを選択中
+                </p>
+              )}
+            </div>
+          )}
 
           {/* 利用可能のみ表示 */}
           <div className="mb-6">
@@ -184,23 +260,6 @@ export default function BookSearchFilters({ filters, onFilterChange }: BookSearc
               </label>
             </div>
           </div>
-
-          {/* フィルターリセットボタン */}
-          <button
-            onClick={() => {
-              const resetFilters = {
-                title: '',
-                author: '',
-                category: '',
-                availableOnly: false,
-              };
-              setLocalFilters(resetFilters);
-              onFilterChange(resetFilters);
-            }}
-            className="w-full py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-          >
-            フィルターをクリア
-          </button>
         </div>
       )}
     </div>

@@ -5,7 +5,10 @@ import { useRouter } from 'next/navigation'
 import { booksApi } from '@/lib/api'
 import { BookOpenIcon, TagIcon, BuildingLibraryIcon, MagnifyingGlassIcon, PhotoIcon } from '@heroicons/react/24/outline'
 import Image from 'next/image'
+import CategorySelector from './CategorySelector'
+import { CategoryStructure } from '@/types/book'
 
+// 旧形式のカテゴリ（後方互換性のため保持）
 const CATEGORIES = [
   'プログラミング',
   'ソフトウェア設計',
@@ -34,25 +37,28 @@ export default function BookImportForm({ onSuccess, onCancel, userId = 1 }: Book
     publisher: '',
     isbn: '',
     publication_date: '',
-    category: '',
+    categories: [] as string[], // 後方互換性のため保持
+    category_structure: { major_category: '技術書', minor_categories: [] } as CategoryStructure, // 新形式
     description: '',
+    reason: '',
     tags: '',
-    location: '寄贈書籍棚',
+    location: '', // ブランクに統一
     donated_by: userId,
     donation_note: '',
-    cover_image: ''
+    image_url: '',
+    estimated_price: 0
   })
   const [error, setError] = useState('')
   const [isbnSearchResult, setIsbnSearchResult] = useState<string | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
 
   useEffect(() => {
-    if (formData.cover_image) {
-      setImagePreview(formData.cover_image);
+    if (formData.image_url) {
+      setImagePreview(formData.image_url);
     } else {
       setImagePreview(null);
     }
-  }, [formData.cover_image]);
+  }, [formData.image_url]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target
@@ -87,9 +93,10 @@ export default function BookImportForm({ onSuccess, onCancel, userId = 1 }: Book
           author: bookData.author || prev.author,
           publisher: bookData.publisher || prev.publisher,
           publication_date: bookData.publication_date || prev.publication_date,
-          category: bookData.category || prev.category,
+          categories: bookData.category ? [bookData.category] : prev.categories,  // 単一カテゴリを配列に変換
           description: bookData.description || prev.description,
-          cover_image: bookData.cover_image || prev.cover_image  // 表紙画像URLも設定
+          image_url: bookData.cover_image || prev.image_url,  // 表紙画像URLも設定
+          estimated_price: bookData.price || prev.estimated_price  // 価格情報も設定
         }))
         
         // 検索成功メッセージを表示
@@ -121,10 +128,13 @@ export default function BookImportForm({ onSuccess, onCancel, userId = 1 }: Book
       // タグを配列に変換
       const tags = formData.tags ? formData.tags.split(',').map(tag => tag.trim()) : []
 
-      // 送信データをコンソールに表示（デバッグ用）
+      // 階層カテゴリ構造を含む送信データを準備
       const submitData = {
         ...formData,
-        tags
+        tags,
+        category_structure: formData.category_structure,
+        // 後方互換性のため旧形式も送信
+        categories: formData.category_structure.minor_categories || []
       }
       console.log('送信データ:', submitData)
 
@@ -270,19 +280,32 @@ export default function BookImportForm({ onSuccess, onCancel, userId = 1 }: Book
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              カテゴリ
+              カテゴリ（階層選択）
             </label>
-            <select
-              name="category"
-              value={formData.category}
+            <CategorySelector
+              selectedCategory={formData.category_structure}
+              onChange={(categoryStructure) => setFormData(prev => ({ 
+                ...prev, 
+                category_structure: categoryStructure,
+                // 後方互換性のため旧形式も更新
+                categories: categoryStructure.minor_categories || []
+              }))}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              予想価格（円）
+            </label>
+            <input
+              type="number"
+              name="estimated_price"
+              value={formData.estimated_price}
               onChange={handleChange}
+              min="0"
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-            >
-              <option value="">カテゴリを選択</option>
-              {CATEGORIES.map(category => (
-                <option key={category} value={category}>{category}</option>
-              ))}
-            </select>
+              placeholder="例：3000"
+            />
           </div>
 
           <div className="col-span-full">
@@ -300,6 +323,20 @@ export default function BookImportForm({ onSuccess, onCancel, userId = 1 }: Book
                 placeholder="例：プログラミング, コードレビュー, ベストプラクティス"
               />
             </div>
+          </div>
+
+          <div className="col-span-full">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              寄贈理由・説明
+            </label>
+            <textarea
+              name="reason"
+              value={formData.reason}
+              onChange={handleChange}
+              rows={3}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+              placeholder="この書籍を寄贈する理由や説明を入力"
+            ></textarea>
           </div>
 
           <div className="col-span-full">
@@ -338,8 +375,8 @@ export default function BookImportForm({ onSuccess, onCancel, userId = 1 }: Book
               <PhotoIcon className="h-5 w-5 text-gray-400 mr-2" />
               <input
                 type="text"
-                name="cover_image"
-                value={formData.cover_image}
+                name="image_url"
+                value={formData.image_url}
                 onChange={handleChange}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
                 placeholder="表紙画像のURL（省略可）"

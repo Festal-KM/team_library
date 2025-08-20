@@ -11,6 +11,9 @@ export type User = {
   full_name: string;
   department: string;
   role: 'user' | 'approver' | 'admin';
+  is_active?: boolean;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export interface UserStats {

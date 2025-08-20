@@ -8,6 +8,7 @@ import { format, isPast, addDays, isValid } from 'date-fns'
 import { ja } from 'date-fns/locale'
 import { BookOpenIcon, ArrowRightIcon, ClockIcon, ArrowPathIcon, CalendarIcon } from '@heroicons/react/24/outline'
 import { useState } from 'react'
+import { useRequireAuth } from '@/hooks/useAuth'
 
 // 安全な日付フォーマット関数
 const formatDate = (dateString: string | null | undefined, formatStr: string = 'yyyy/MM/dd') => {
@@ -25,16 +26,25 @@ const formatDate = (dateString: string | null | undefined, formatStr: string = '
 };
 
 export default function MyBooksSection() {
-  // ユーザーID（実際にはコンテキストから取得）
-  const userId = 1;  // デモ用に固定
+  // 認証ストアから現在のユーザー情報を取得
+  const { user, isReady } = useRequireAuth();
   const queryClient = useQueryClient();
   const [returningBooks, setReturningBooks] = useState<Record<number, boolean>>({});
   const [extendingBooks, setExtendingBooks] = useState<Record<number, boolean>>({});
 
-  const { data: loans, isLoading, error } = useQuery({
-    queryKey: ['loans', 'active', userId],
-    queryFn: () => loansApi.getUserActiveLoans(userId),
+  const { data: loansResponse, isLoading, error } = useQuery({
+    queryKey: ['loans', 'active', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return [];
+      const result = await loansApi.getUserActiveLoans(user.id);
+      console.log('API Response:', result);
+      return result;
+    },
+    enabled: isReady && !!user?.id,
   })
+
+  // APIレスポンスから配列を取得
+  const loans = Array.isArray(loansResponse) ? loansResponse : (loansResponse as any)?.loans || [];
 
   const handleReturnBook = async (loanId: number) => {
     try {
@@ -82,6 +92,23 @@ export default function MyBooksSection() {
     }
   };
 
+  // ユーザーが認証されていない場合
+  if (!isReady || !user) {
+    return (
+      <section className="bg-white rounded-lg shadow-md p-4">
+        <div className="flex justify-between items-center mb-4">
+          <div className="flex items-center gap-2">
+            <BookOpenIcon className="h-5 w-5 text-primary-600" />
+            <h3 className="text-lg font-semibold">借りている本</h3>
+          </div>
+        </div>
+        <div className="text-center py-8 text-gray-500">
+          <p>ログインしてください</p>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="bg-white rounded-lg shadow-md p-4">
       <div className="flex justify-between items-center mb-4">
@@ -113,7 +140,13 @@ export default function MyBooksSection() {
         </div>
       ) : (
         <div className="divide-y">
-          {loans.slice(0, 3).map(loan => {
+          {loans.slice(0, 3).map((loan: any) => {
+            // 新しいデータ構造に対応
+            const bookTitle = loan.book?.title || loan.book_title || `書籍ID: ${loan.book_id}`
+            const bookImage = loan.book?.image_url || loan.book_image
+            const loanId = loan.id || loan.loan_id
+            const borrowedAt = loan.loan_date || loan.borrowed_at
+            
             // 安全な日付処理
             const dueDate = loan.due_date ? new Date(loan.due_date) : new Date();
             const isValidDueDate = isValid(dueDate);
@@ -122,36 +155,38 @@ export default function MyBooksSection() {
               (dueDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
             ) : 0;
             
-            const loanId = loan.loan_id || loan.id; // loan_idかidのどちらかを使用
             const isReturning = returningBooks[loanId];
             const isExtending = extendingBooks[loanId];
             
             return (
               <div key={loanId} className="py-3 flex items-start">
                 <div className="flex-shrink-0 w-12 h-16 bg-gray-100 mr-3 relative">
-                  {loan.book_image ? (
+                  {bookImage ? (
                     <Image 
-                      src={loan.book_image} 
-                      alt={loan.book_title || `書籍ID: ${loan.book_id}`}
+                      src={bookImage} 
+                      alt={bookTitle}
                       width={48}
                       height={64}
                       className="object-cover w-full h-full"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                        e.currentTarget.nextElementSibling?.classList.remove('hidden');
+                      }}
                     />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-gray-400">
-                      <BookOpenIcon className="h-6 w-6" />
-                    </div>
-                  )}
+                  ) : null}
+                  <div className={`w-full h-full flex items-center justify-center text-gray-400 ${bookImage ? 'hidden' : ''}`}>
+                    <BookOpenIcon className="h-6 w-6" />
+                  </div>
                 </div>
                 <div className="flex-grow min-w-0">
                   <Link 
                     href={`/books/${loan.book_id}`} 
                     className="font-medium hover:text-primary-600 line-clamp-1"
                   >
-                    {loan.book_title || `書籍ID: ${loan.book_id}`}
+                    {bookTitle}
                   </Link>
                   <div className="text-sm text-gray-500">
-                    貸出日: {formatDate(loan.borrowed_at)}
+                    貸出日: {formatDate(borrowedAt)}
                   </div>
                   <div className={`flex items-center mt-1 text-sm ${
                     isOverdue ? 'text-red-600' : daysLeft <= 3 ? 'text-amber-600' : 'text-gray-600'
@@ -183,20 +218,19 @@ export default function MyBooksSection() {
                       )}
                     </button>
                     <button
-                      onClick={() => handleExtendLoan(loanId, 7)}
-                      disabled={isReturning || isExtending || isOverdue}
+                      onClick={() => handleExtendLoan(loanId)}
+                      disabled={isReturning || isExtending}
                       className="px-2 py-1 text-xs bg-blue-50 text-blue-700 rounded border border-blue-200 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
-                      title={isOverdue ? '延滞中は延長できません' : '7日間延長します'}
                     >
                       {isExtending ? (
                         <>
                           <ArrowPathIcon className="h-3 w-3 mr-1 animate-spin" />
-                          延長処理中...
+                          延長中...
                         </>
                       ) : (
                         <>
                           <CalendarIcon className="h-3 w-3 mr-1" />
-                          延長する
+                          7日延長
                         </>
                       )}
                     </button>
@@ -208,5 +242,5 @@ export default function MyBooksSection() {
         </div>
       )}
     </section>
-  )
+  );
 } 

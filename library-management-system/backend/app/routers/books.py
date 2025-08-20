@@ -1,8 +1,9 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional
 from app.models.models import Book
-from app.data.store import book_store, reservation_store
+from app.data.store import book_store, reservation_store, loan_store
 from pydantic import BaseModel
+from datetime import datetime
 
 router = APIRouter()
 
@@ -105,27 +106,36 @@ async def update_book(book_id: int, book_update: BookUpdate):
 @router.delete("/{book_id}")
 async def delete_book(book_id: int):
     """
-    書籍を削除
+    書籍を強制削除（貸出中・予約中でも削除可能）
     """
     existing_book = book_store.get_by_id(book_id)
     if not existing_book:
         raise HTTPException(status_code=404, detail="書籍が見つかりません")
     
-    # 貸出中の場合は削除不可
+    # 貸出中の場合は強制返却
+    active_loans = []
     if not existing_book.is_available and existing_book.current_borrower_id:
-        raise HTTPException(status_code=400, detail="貸出中の書籍は削除できません")
+        # 強制返却処理
+        active_loans = loan_store.filter(book_id=book_id, is_returned=False)
+        for loan in active_loans:
+            loan.is_returned = True
+            loan.return_date = datetime.now().date()
+            loan.notes = f"書籍削除により強制返却 (削除日: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')})"
+            loan_store.update(loan.id, loan.__dict__)
     
-    # 予約があるかチェック
+    # 予約がある場合はキャンセル
     reservations = reservation_store.filter(book_id=book_id, is_active=True)
-    if reservations:
-        raise HTTPException(status_code=400, detail="予約がある書籍は削除できません")
+    for reservation in reservations:
+        reservation.is_active = False
+        reservation.notes = f"書籍削除によりキャンセル (削除日: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')})"
+        reservation_store.update(reservation.id, reservation.__dict__)
     
     # 削除実行
     success = book_store.delete(book_id)
     if not success:
         raise HTTPException(status_code=500, detail="書籍の削除に失敗しました")
     
-    return {"message": "書籍を削除しました", "id": book_id}
+    return {"message": f"書籍を削除しました（貸出{len(active_loans)}件返却、予約{len(reservations)}件キャンセル）", "id": book_id}
 
 @router.get("/{book_id}/reservations/count")
 async def get_reservation_count(book_id: int):

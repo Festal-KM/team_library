@@ -13,7 +13,8 @@ export default function BooksPage() {
   const [filters, setFilters] = useState({
     title: '',
     author: '',
-    category: '',
+    major_category: '',
+    minor_categories: [] as string[],
     availableOnly: false,
   })
   
@@ -26,7 +27,8 @@ export default function BooksPage() {
     queryFn: () => booksApi.getBooks({
       title: filters.title || undefined,
       author: filters.author || undefined,
-      category: filters.category || undefined,
+      major_category: filters.major_category || undefined,
+      minor_categories: filters.minor_categories.length > 0 ? filters.minor_categories : undefined,
       available_only: filters.availableOnly,
     }),
   })
@@ -103,7 +105,8 @@ export default function BooksPage() {
                   setFilters({
                     title: '',
                     author: '',
-                    category: '',
+                    major_category: '',
+                    minor_categories: [],
                     availableOnly: false,
                   });
                 }}

@@ -9,21 +9,14 @@ import {
 } from '@heroicons/react/24/outline'
 import Link from 'next/link'
 import Image from 'next/image'
-import { format } from 'date-fns'
-import { ja } from 'date-fns/locale'
+import { formatDate } from '@/lib/dateUtils'
 
 interface PurchaseRequestsCardProps {
   requests: any[]
 }
 
 export default function PurchaseRequestsCard({ requests }: PurchaseRequestsCardProps) {
-  const formatDate = (dateString: string) => {
-    try {
-      return format(new Date(dateString), 'yyyy年MM月dd日', { locale: ja })
-    } catch (error) {
-      return '日付不明'
-    }
-  }
+  // formatDate関数は @/lib/dateUtils からインポートするように変更
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -37,6 +30,24 @@ export default function PurchaseRequestsCard({ requests }: PurchaseRequestsCardP
         return (
           <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
             <CheckCircleIcon className="h-4 w-4 mr-1" /> 承認済み
+          </span>
+        )
+      case 'ordered':
+        return (
+          <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+            <ShoppingCartIcon className="h-4 w-4 mr-1" /> 発注済み
+          </span>
+        )
+      case 'received':
+        return (
+          <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-purple-100 text-purple-800">
+            <CheckCircleIcon className="h-4 w-4 mr-1" /> 受領済み
+          </span>
+        )
+      case 'completed':
+        return (
+          <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-indigo-100 text-indigo-800">
+            <CheckCircleIcon className="h-4 w-4 mr-1" /> 完了
           </span>
         )
       case 'rejected':
@@ -54,53 +65,64 @@ export default function PurchaseRequestsCard({ requests }: PurchaseRequestsCardP
       default:
         return (
           <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
-            {status}
+            不明
           </span>
         )
     }
   }
 
+  // requestsが配列でない場合の安全な処理
+  const safeRequests = Array.isArray(requests) ? requests : []
+
   return (
     <div className="bg-white p-6 rounded-lg shadow-md">
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-semibold flex items-center">
           <ShoppingCartIcon className="h-5 w-5 text-primary-600 mr-2" />
           購入リクエスト
-          {requests && requests.length > 0 && (
-            <span className="ml-2 text-sm font-normal text-gray-500">{requests.length}件</span>
-          )}
         </h2>
-        
-        <Link href="/purchase-requests/new">
-          <button className="px-3 py-1.5 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 flex items-center">
-            <PlusCircleIcon className="h-4 w-4 mr-1" />
-            新規リクエスト
-          </button>
+        <Link 
+          href="/purchase-requests/new"
+          className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+        >
+          <PlusCircleIcon className="h-4 w-4 mr-1" />
+          新規申請
         </Link>
       </div>
 
-      {(!requests || requests.length === 0) ? (
-        <div className="text-gray-500 py-4 text-center">
-          購入リクエストの履歴はありません
+      {safeRequests.length === 0 ? (
+        <div className="text-center py-8">
+          <ShoppingCartIcon className="mx-auto h-12 w-12 text-gray-400" />
+          <h3 className="mt-2 text-sm font-medium text-gray-900">購入リクエストがありません</h3>
+          <p className="mt-1 text-sm text-gray-500">新しい書籍の購入をリクエストしてみましょう。</p>
+          <div className="mt-6">
+            <Link 
+              href="/purchase-requests/new"
+              className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+            >
+              <PlusCircleIcon className="h-4 w-4 mr-2" />
+              購入リクエストを作成
+            </Link>
+          </div>
         </div>
       ) : (
-        <div className="overflow-hidden">
+        <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  書籍情報
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  書籍
                 </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  リクエスト日
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  申請日
                 </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  状態
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  ステータス
                 </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {requests.map((request) => (
+              {safeRequests.map((request) => (
                 <tr key={request.id}>
                   <td className="px-6 py-4">
                     <div className="flex items-center">
@@ -130,21 +152,27 @@ export default function PurchaseRequestsCard({ requests }: PurchaseRequestsCardP
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm text-gray-900">
-                      {formatDate(request.created_at)}
+                      {formatDate(request.created_at, { includeTime: false })}
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     {getStatusBadge(request.status)}
-                    {request.status === 'rejected' && request.rejection_reason && (
-                      <div className="mt-1 text-xs text-red-600">
-                        理由: {request.rejection_reason}
-                      </div>
-                    )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {safeRequests.length > 0 && (
+        <div className="mt-4 text-center">
+          <Link 
+            href="/purchase-requests"
+            className="text-primary-600 hover:text-primary-500 text-sm font-medium"
+          >
+            すべての購入リクエストを見る →
+          </Link>
         </div>
       )}
     </div>
